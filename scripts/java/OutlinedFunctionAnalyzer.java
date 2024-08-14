@@ -8,6 +8,7 @@
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -15,8 +16,12 @@ import java.util.regex.Pattern;
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.Category;
+import ghidra.program.model.data.CategoryPath;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.DataTypeComponent;
 import ghidra.program.model.data.DataTypeManager;
+import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.VoidDataType;
 import ghidra.program.model.lang.CompilerSpec;
 import ghidra.program.model.lang.Register;
@@ -26,7 +31,9 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.listing.ParameterImpl;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.listing.ReturnParameterImpl;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SourceType;
@@ -156,21 +163,108 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 		// Sort the incoming paramters (using Ghidra's native register sorting order)
 		Collections.sort(params);
 
-		// Infer the return value
-		if (info.kind == OutlinedFunctionKind.Delegate && info.getTarget() != null)
-
-		{
+		// Approximate the return value
+		if (info.kind == OutlinedFunctionKind.Delegate && info.getTarget() != null) {
+			// Delegate with well-known target
 			Parameter target_ret = info.getTarget().getReturn();
 
 			if (target_ret != null && !VoidDataType.isVoidDataType(target_ret.getDataType())) {
-				ret_value = new ParameterImpl(target_ret, func.getProgram());
+				ret_value = new ReturnParameterImpl(target_ret, func.getProgram());
 			}
+
+		} else if (info.kind == OutlinedFunctionKind.Simple) {
+
+			// Outline function of "simple" kind
+			ret_value = approximateReturnValueFromRegisters(dtm, info);
 		}
 
 		// Update the function signature (leave the return value intact - for now)
 		func.updateFunction(calling_conv, ret_value, params, FunctionUpdateType.CUSTOM_STORAGE, true,
 				SourceType.ANALYSIS);
 
+	}
+
+	/**
+	 * @brief Approximates the return value (tuple) of an outlined function from its
+	 *        register information.
+	 * 
+	 * @return A return value param
+	 * @throws InvalidInputException
+	 */
+	private Parameter approximateReturnValueFromRegisters(DataTypeManager dtm, OutlinedFunctionInfo info)
+			throws InvalidInputException {
+
+		List<Register> out_regs = new ArrayList<Register>(info.getRegisters().getDefined());
+
+		if (out_regs.size() == 0) {
+			// Void result (no change)
+			return null;
+
+		} else if (out_regs.size() == 1) {
+			// Simple outlined function with a single return register
+			DataType param_type = getDefaultDataType(dtm, out_regs.get(0).getNumBytes());
+			return new ReturnParameterImpl(param_type, out_regs.get(0), info.getFunction().getProgram());
+
+		} else {
+			// Simple outlined function result (need to synthesize a tuple type)
+			Function func = info.getFunction();
+
+			// Sort the list of output register by register size (this simplifies
+			// straightforward packing into the tuple output structure)
+			out_regs.sort(new Comparator<Register>() {
+				@Override
+				public int compare(Register o1, Register o2) {
+					int delta = o1.getNumBytes() - o2.getNumBytes();
+
+					if (delta > 0) {
+						return -1;
+
+					} else if (delta < 0) {
+						return 1;
+
+					} else {
+						// Same size, fallback to Ghidra's default sorting order
+						return o1.compareTo(o2);
+					}
+				}
+			});
+
+			// Construct the compound type
+			CategoryPath outline_types = new CategoryPath("/OutlineReturnTuples");
+			Category type_cat = dtm.createCategory(outline_types);
+			String type_name = func.getName() + ".RetVal_t";
+
+			StructureDataType ret_type = new StructureDataType(type_name, 0, dtm);
+			ret_type.setDescription(
+					String.format("Return tuple-type inferred for %s @ %s", func.getName(), func.getEntryPoint()));
+			ret_type.setExplicitPackingValue(1);
+			ret_type.setExplicitMinimumAlignment(1);
+
+			List<DataTypeComponent> comps = new ArrayList<DataTypeComponent>(out_regs.size());
+
+			for (Register out_reg : out_regs) {
+				DataType field_type = getDefaultDataType(dtm, out_reg.getNumBytes());
+				DataTypeComponent comp = ret_type.add(field_type, 0, out_reg.getName(), null);
+			}
+
+			DataType final_ret_type = type_cat.addDataType(ret_type, null);
+
+			// Construct the variable storage for the return value
+			//
+			// TODO: Check if the "reversed" order is dependent on big/little endian
+			// setting.
+			List<Register> storage_regs = new ArrayList<Register>(out_regs);
+			Collections.reverse(storage_regs);
+
+			VariableStorage ret_storage = new VariableStorage(dtm.getProgramArchitecture(),
+					storage_regs.toArray(new Register[0]));
+
+			Parameter ret_param = new ReturnParameterImpl(final_ret_type, ret_storage, func.getProgram());
+
+			printf("%s\n", ret_param);
+
+			return ret_param;
+		}
 	}
 
 	/**
