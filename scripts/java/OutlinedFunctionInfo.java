@@ -30,7 +30,7 @@ public class OutlinedFunctionInfo {
 		this.kind = OutlinedFunctionKind.classify(insns);
 
 		// Analyze depending on the function category
-		if (this.kind == OutlinedFunctionKind.Delegate) {
+		if (this.kind == OutlinedFunctionKind.DELEGATE) {
 			// Outlined delegate function (last instruction is a tail-call)
 			//
 			// We assume linear control flow up to the start of the function.
@@ -44,15 +44,27 @@ public class OutlinedFunctionInfo {
 				this.target = null;
 			}
 
-			this.regs = approximateRegisterUsage(insns, this.target);
+			this.regs = approximateRegisterUsage(insns, this.target, false);
 
-		} else if (this.kind == OutlinedFunctionKind.Simple) {
+		} else if (this.kind == OutlinedFunctionKind.SIMPLE) {
 			// Simple outlined function (no calls, terminator at the end)
 			//
-			// We assume linear control flow up to the start of the outlined function.
+			// We assume linear control flow up to the terminator at the end of the outlined
+			// function.
 			//
 			this.target = null;
-			this.regs = approximateRegisterUsage(insns, null);
+			this.regs = approximateRegisterUsage(insns, null, false);
+
+		} else if (this.kind == OutlinedFunctionKind.COMPUTED_JUMP) {
+			// Simple outlined function (no calls, terminator at the end) with a computed
+			// jump at the end.
+			//
+			// We assume linear control flow up to the terminator at the end of the outlined
+			// function. Analysis is similar to the SIMPLE case, but we additionally analyze
+			// the terminator instruction to capture the target function pointer.
+			//
+			this.target = null;
+			this.regs = approximateRegisterUsage(insns, null, true);
 
 		} else {
 			// Complex outlined function
@@ -125,15 +137,20 @@ public class OutlinedFunctionInfo {
 	 * a linear sequence of unconditional instructions followed by a single branch
 	 * or terminator at the end. (i.e. the body has basic block like semantics).
 	 *
-	 * @param insns       is the list of instruction found in the body of the
-	 *                    outlined function.
+	 * @param insns              is the list of instruction found in the body of the
+	 *                           outlined function.
 	 *
-	 * @param target_func is the target function (if any)
+	 * @param target_func        is the target function (if any)
+	 * 
+	 * @param analyze_terminator controls if the terminator instruction itself
+	 *                           should be analyzed for the register usage
+	 *                           estimation.
 	 *
 	 * @return The (raw) set of input registers (potentially including the stack
 	 *         pointer and stale flags) that are used in this function.
 	 */
-	private OutlinedRegisterInfo approximateRegisterUsage(List<Instruction> insns, Function target_func) {
+	private OutlinedRegisterInfo approximateRegisterUsage(List<Instruction> insns, Function target_func,
+			boolean analyze_terminator) {
 
 		OutlinedRegisterInfo info = new OutlinedRegisterInfo(this);
 
@@ -141,10 +158,11 @@ public class OutlinedFunctionInfo {
 		// of registers:
 		//
 		// - We consider any registers that are used before definition as primary inputs
-		// of
-		// the outlined function.
+		// of the outlined function.
 		//
-		for (int i = 0; i < (insns.size() - 1); ++i) {
+		final int num_insns = analyze_terminator ? insns.size() : (insns.size() - 1);
+
+		for (int i = 0; i < num_insns; ++i) {
 			Instruction insn = insns.get(i);
 
 			// Scan over the inputs of this instruction

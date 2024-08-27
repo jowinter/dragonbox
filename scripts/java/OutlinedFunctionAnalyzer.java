@@ -25,7 +25,6 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Function.FunctionUpdateType;
 import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.listing.ParameterImpl;
-import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.ReturnParameterImpl;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.listing.VariableStorage;
@@ -51,6 +50,12 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 	 */
 	private final String simpleSuffix = ".Asm";
 
+	/**
+	 * Name suffix appended to outlined functions that are identified as "computed
+	 * jump"
+	 */
+	private final String computedJumpSuffix = ".ComputedJump";
+
 	@Override
 	protected void run() throws Exception {
 		for (OutlinedFunctionInfo outline : getOutlinedFunctions()) {
@@ -62,18 +67,18 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 				basename = basename.substring(0, dot_index);
 			}
 
-			if (outline.getKind() == OutlinedFunctionKind.Delegate && outline.target != null) {
+			if (outline.getKind() == OutlinedFunctionKind.DELEGATE && outline.target != null) {
 				// Rename "delegate" style functions
 				//
 				// NOTE: This prevents (re-)analysis by this script (as a side effect) as the
-				// new name
-				// no longer matches the outline name pattern.
+				// new name no longer matches the outline name pattern.
 				String new_name = basename + this.delegateInfix + outline.target.getName();
 				outline.function.setName(new_name, SourceType.ANALYSIS);
 
 				// Approximate the prototype
 				approximatPrototype(outline);
-			} else if (outline.getKind() == OutlinedFunctionKind.Simple) {
+
+			} else if (outline.getKind() == OutlinedFunctionKind.SIMPLE) {
 				// Rename "simple" style functions
 				//
 				// NOTE: This prevents (re-)analysis by this script (as a side effect) as the
@@ -84,6 +89,22 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 
 				// TODO: Enable approximation of the prototype (requires better handling of CPU
 				// flags etc).
+				approximatPrototype(outline);
+
+			} else if (outline.getKind() == OutlinedFunctionKind.COMPUTED_JUMP) {
+				// Rename "computed-jump" style functions.
+				//
+				// NOTE: This prevents (re-)analysis by this script (as a side effect) as the
+				// new name no longer matches the outline name pattern.
+				String new_name = basename + this.computedJumpSuffix;
+				outline.function.setName(new_name, SourceType.ANALYSIS);
+
+				// TODO: Can we (reliable) infer useful properties of the indirect branch
+				// target?
+				// (Currently the script user has to back-annotate an appropriate function
+				// pointer type).
+
+				// Approximate the prototype
 				approximatPrototype(outline);
 			}
 		}
@@ -152,11 +173,11 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 			params.add(in_param);
 		}
 
-		// Sort the incoming paramters (using Ghidra's native register sorting order)
+		// Sort the incoming parameters (using Ghidra's native register sorting order)
 		Collections.sort(params);
 
 		// Approximate the return value
-		if (info.kind == OutlinedFunctionKind.Delegate && info.getTarget() != null) {
+		if (info.kind == OutlinedFunctionKind.DELEGATE && info.getTarget() != null) {
 			// Delegate with well-known target
 			Parameter target_ret = info.getTarget().getReturn();
 
@@ -164,7 +185,7 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 				ret_value = new ReturnParameterImpl(target_ret, func.getProgram());
 			}
 
-		} else if (info.kind == OutlinedFunctionKind.Simple) {
+		} else if (info.kind == OutlinedFunctionKind.SIMPLE) {
 
 			// Outline function of "simple" kind
 			ret_value = approximateReturnValueFromRegisters(dtm, info);

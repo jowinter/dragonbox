@@ -1,4 +1,5 @@
 
+import ghidra.app.script.GhidraScript;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.RefType;
@@ -10,17 +11,23 @@ public enum OutlinedFunctionKind {
 	/**
 	 * Complex outlined function (no other more specific category applies).
 	 */
-	Complex,
+	COMPLEX,
 
 	/**
 	 * Simple outline function.
 	 */
-	Simple,
+	SIMPLE,
 
 	/**
-	 * Delegate (thunk-like) outline function.
+	 * Delegate (thunk-like) outline function with static branch target.
 	 */
-	Delegate;
+	DELEGATE,
+
+	/**
+	 * Delegate (think-like) outline function with computed a computed branch at its
+	 * end.
+	 */
+	COMPUTED_JUMP;
 
 	/**
 	 * Classifies an outlined function.
@@ -38,21 +45,24 @@ public enum OutlinedFunctionKind {
 
 			if ((flow == RefType.CALL_TERMINATOR) && (kind == null)) {
 				// Block terminator (tail-call)
-				kind = OutlinedFunctionKind.Delegate;
+				kind = OutlinedFunctionKind.DELEGATE;
 			} else if (flow == RefType.TERMINATOR && (kind == null)) {
 				// Block terminator (return)
-				kind = OutlinedFunctionKind.Simple;
+				kind = OutlinedFunctionKind.SIMPLE;
 			} else if (flow == RefType.FALL_THROUGH && (kind == null)) {
 				// Normal (fall-through) instruction
+			} else if (flow == RefType.COMPUTED_JUMP && (kind == null)) {
+				// Block terminator (computed jump)
+				kind = OutlinedFunctionKind.COMPUTED_JUMP;
 			} else {
 				// Other flow type (e.g. computed call, ...) or "strange" block (e.g.
 				// FALL_THROUGH after terminator)
-				kind = OutlinedFunctionKind.Complex;
+				kind = OutlinedFunctionKind.COMPLEX;
 				break;
 			}
 		}
 
 		// Fallback to complex
-		return (kind != null) ? kind : OutlinedFunctionKind.Complex;
+		return (kind != null) ? kind : OutlinedFunctionKind.COMPLEX;
 	}
 }
