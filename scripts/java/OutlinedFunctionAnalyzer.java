@@ -53,10 +53,7 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 
 	@Override
 	protected void run() throws Exception {
-		// Extract outlined functions
-		List<OutlinedFunctionInfo> outlines = getOutlinedFunctions(currentProgram);
-
-		for (OutlinedFunctionInfo outline : outlines) {
+		for (OutlinedFunctionInfo outline : getOutlinedFunctions()) {
 			String basename = outline.function.getName();
 
 			int dot_index = basename.indexOf('.');
@@ -93,17 +90,19 @@ public class OutlinedFunctionAnalyzer extends GhidraScript {
 	}
 
 	/**
-	 * Analyzes all outlined functions in a program.
+	 * Analyzes all outlined functions that are currently selected.
 	 *
 	 * @param program the program to be analyzed.
 	 *
 	 * @return A list of analysis results for the outlined functions in the given
 	 *         program.
 	 */
-	public List<OutlinedFunctionInfo> getOutlinedFunctions(Program program) {
-		List<OutlinedFunctionInfo> results = new ArrayList<>();
+	public List<OutlinedFunctionInfo> getOutlinedFunctions() {
 
-		for (Function func = getFirstFunction(); func != null; func = getFunctionAfter(func)) {
+		Function[] candidates = DragonBoxHelpers.getSelectedFunctions(this, currentSelection, true);
+		List<OutlinedFunctionInfo> results = new ArrayList<OutlinedFunctionInfo>(candidates.length);
+
+		for (Function func : candidates) {
 			if (isOutlinedFunction(func)) {
 				OutlinedFunctionInfo info = new OutlinedFunctionInfo(func);
 				results.add(info);
